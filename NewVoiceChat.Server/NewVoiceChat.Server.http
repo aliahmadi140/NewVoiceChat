@@ -1,0 +1,6 @@
+@NewVoiceChat.Server_HostAddress = http://localhost:5163
+
+GET {{NewVoiceChat.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

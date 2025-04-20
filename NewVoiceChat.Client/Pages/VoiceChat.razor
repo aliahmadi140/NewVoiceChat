@@ -1,0 +1,262 @@
+@page "/voicechat"
+@using NewVoiceChat.Client.Services
+@using NewVoiceChat.Shared.Models
+@inject VoiceChatService VoiceChatService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Voice Chat</PageTitle>
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Create Room</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="roomName" class="form-label">Room Name</label>
+                        <input @bind="newRoomName" type="text" class="form-control" id="roomName" />
+                    </div>
+                    <button @onclick="CreateRoom" class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(newRoomName)">
+                        Create Room
+                    </button>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5>Available Rooms</h5>
+                </div>
+                <div class="card-body">
+                    @if (rooms.Any())
+                    {
+                        <ul class="list-group">
+                            @foreach (var room in rooms)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>@room.Name</strong>
+                                        <br />
+                                        <small class="text-muted">Created @room.CreatedAt.ToLocalTime().ToString("g")</small>
+                                    </div>
+                                    <button @onclick="() => JoinRoom(room.Name)" 
+                                            class="btn btn-sm @(currentRoom == room.Name ? "btn-success" : "btn-primary")"
+                                            disabled="@(currentRoom == room.Name)">
+                                        @(currentRoom == room.Name ? "Joined" : "Join")
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <p class="text-muted">No rooms available</p>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5>Current Room</h5>
+                    @if (!string.IsNullOrEmpty(currentRoom))
+                    {
+                        <button @onclick="LeaveRoom" class="btn btn-danger btn-sm">Leave Room</button>
+                    }
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(currentRoom))
+                    {
+                        <div class="mb-3">
+                            <h6>Room: @currentRoom</h6>
+                            <p>Users in room: @users.Count</p>
+                        </div>
+
+                        <div class="list-group">
+                            @foreach (var user in users)
+                            {
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>@user.Name</span>
+                                        <span class="badge bg-primary">@(user.Id == VoiceChatService.UserId ? "You" : "Connected")</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="text-muted">Not in a room</p>
+                    }
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5>Connection Status</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="connection-status @(isConnected ? "connected" : "disconnected")"></div>
+                        <span class="ms-2">@(isConnected ? "Connected" : "Disconnected")</span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger mt-3">
+                            @errorMessage
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<Room> rooms = new();
+    private List<User> users = new();
+    private string? currentRoom;
+    private string newRoomName = string.Empty;
+    private bool isConnected;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await VoiceChatService.InitializeAsync("https://localhost:7001");
+            isConnected = true;
+
+            VoiceChatService.OnRoomCreated += HandleRoomCreated;
+            VoiceChatService.OnRoomDestroyed += HandleRoomDestroyed;
+            VoiceChatService.OnUserJoined += HandleUserJoined;
+            VoiceChatService.OnUserLeft += HandleUserLeft;
+            VoiceChatService.OnError += HandleError;
+        }
+        catch (Exception)
+        {
+            errorMessage = "Failed to connect to server";
+            isConnected = false;
+        }
+    }
+
+    private async Task CreateRoom()
+    {
+        if (string.IsNullOrWhiteSpace(newRoomName))
+        {
+            return;
+        }
+
+        try
+        {
+            await VoiceChatService.CreateRoomAsync(newRoomName);
+            newRoomName = string.Empty;
+        }
+        catch (Exception)
+        {
+            errorMessage = "Failed to create room";
+        }
+    }
+
+    private async Task JoinRoom(string roomName)
+    {
+        try
+        {
+            await VoiceChatService.JoinRoomAsync(roomName);
+            currentRoom = roomName;
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            errorMessage = "Failed to join room";
+        }
+    }
+
+    private async Task LeaveRoom()
+    {
+        try
+        {
+            await VoiceChatService.LeaveRoomAsync();
+            currentRoom = null;
+            users.Clear();
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            errorMessage = "Failed to leave room";
+        }
+    }
+
+    private void HandleRoomCreated(Room room)
+    {
+        rooms.Add(room);
+        StateHasChanged();
+    }
+
+    private void HandleRoomDestroyed(string roomName)
+    {
+        var room = rooms.FirstOrDefault(r => r.Name == roomName);
+        if (room != null)
+        {
+            rooms.Remove(room);
+            if (currentRoom == roomName)
+            {
+                currentRoom = null;
+                users.Clear();
+            }
+            StateHasChanged();
+        }
+    }
+
+    private void HandleUserJoined(User user)
+    {
+        if (currentRoom != null)
+        {
+            users.Add(user);
+            StateHasChanged();
+        }
+    }
+
+    private void HandleUserLeft(User user)
+    {
+        if (currentRoom != null)
+        {
+            users.RemoveAll(u => u.Id == user.Id);
+            StateHasChanged();
+        }
+    }
+
+    private void HandleError(string error)
+    {
+        errorMessage = error;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        VoiceChatService.OnRoomCreated -= HandleRoomCreated;
+        VoiceChatService.OnRoomDestroyed -= HandleRoomDestroyed;
+        VoiceChatService.OnUserJoined -= HandleUserJoined;
+        VoiceChatService.OnUserLeft -= HandleUserLeft;
+        VoiceChatService.OnError -= HandleError;
+    }
+}
+
+<style>
+    .connection-status {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .connection-status.connected {
+        background-color: #28a745;
+    }
+
+    .connection-status.disconnected {
+        background-color: #dc3545;
+    }
+</style> 

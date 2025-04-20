@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  janus:
+    image: canyan/janus-gateway:latest
+    container_name: janus
+    ports:
+      - "8088:8088"  # HTTP/WebSocket
+      - "8188:8188"  # Admin/monitor
+      - "7088:7088"  # REST API
+      - "8089:8089"  # WebRTC
+      - "8000:8000"  # RTP forward
+    environment:
+      - TZ=UTC
+      - JANUS_HOST=0.0.0.0
+      - JANUS_WS_HOST=0.0.0.0
+      - JANUS_WS_PORT=8188
+      - JANUS_HTTP_HOST=0.0.0.0
+      - JANUS_HTTP_PORT=8088
+      - JANUS_REST_HOST=0.0.0.0
+      - JANUS_REST_PORT=7088
+      - JANUS_ICE_TCP=false
+      - JANUS_ICE_LITE=false
+      - JANUS_ICE_ENFORCE_LIST=eth0
+      - JANUS_NAT_1_1_MAPPING=
+      - JANUS_TURN_REST_API_KEY=
+      - JANUS_TURN_REST_API_URL=
+      - JANUS_TURN_SERVER=
+      - JANUS_TURN_USER=
+      - JANUS_TURN_PASSWORD=
+      - JANUS_TURN_TYPE=udp
+      - JANUS_TURN_USE_TURN=true
+      - JANUS_STUN_SERVER=stun.l.google.com:19302
+      - JANUS_STUN_PORT=19302
+      - JANUS_NO_STUN=false
+      - JANUS_NO_WEBSOCKETS=false
+      - JANUS_NO_REST=false
+      - JANUS_NO_WEBSOCKETS_SSL=false
+      - JANUS_NO_MQTT=false
+      - JANUS_NO_UNIX_SOCKETS=false
+      - JANUS_NO_DATA_CHANNELS=false
+      - JANUS_NO_BROWSERS=false
+      - JANUS_NO_AUDIO_BRIDGE=false
+      - JANUS_NO_VIDEO_BRIDGE=false
+      - JANUS_NO_SIP=false
+      - JANUS_NO_RECORDPLAY=false
+      - JANUS_NO_TEXTROOM=false
+      - JANUS_NO_VOICEMAIL=false
+      - JANUS_NO_AUDIO_CALL=false
+      - JANUS_NO_VIDEO_CALL=false
+      - JANUS_NO_ECHO_TEST=false
+      - JANUS_NO_STREAMING=false
+    volumes:
+      - ./janus/etc/janus:/etc/janus
+      - ./janus/var/lib/janus:/var/lib/janus
+      - ./janus/var/log/janus:/var/log/janus
+    restart: unless-stopped
+    networks:
+      - janus-network
+
+networks:
+  janus-network:
+    driver: bridge 

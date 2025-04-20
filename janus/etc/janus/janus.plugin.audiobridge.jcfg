@@ -1,0 +1,12 @@
+general: {
+    events = true
+    admin_key = "janusoverlord"
+}
+
+room-1234: {
+    description = "Demo Room"
+    sampling_rate = 16000
+    record = false
+    record_file = false
+    allow_rtp_participants = false
+} 
