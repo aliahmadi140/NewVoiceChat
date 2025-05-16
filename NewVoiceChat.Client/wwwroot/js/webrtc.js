@@ -1,253 +1,163 @@
-let peerConnections = new Map(); // Track peer connections by user ID
-let dotNetObject;
-let queuedIceCandidates = new Map(); // Track queued ICE candidates by user ID
-let audioElements = new Map(); // Track audio elements by user ID
+let localStream = null;
+let peerConnection = null;
+let dotNetObjectReference = null;
+let currentRoomId = null;
 
-export function initialize(dotNetObj) {
-    dotNetObject = dotNetObj;
-}
+const iceServers = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+    ]
+};
 
-export async function createPeerConnection(roomId, userId) {
-    try {
-        // Close any existing connection for this user
-        if (peerConnections.has(userId)) {
-            await closePeerConnection(userId);
+window.initializeWebRTC = function(dotNetRef) {
+    console.log('[WebRTC] Initializing WebRTC module');
+    dotNetObjectReference = dotNetRef;
+    return true;
+};
+
+window.createPeerConnection = async function(roomId) {
+    console.log(`[WebRTC] Creating peer connection for room: ${roomId}`);
+    currentRoomId = roomId;
+
+    if (peerConnection) {
+        console.log('[WebRTC] Closing existing peer connection before creating a new one.');
+        await closeWebRTCPeerConnection();
+    }
+    
+    peerConnection = new RTCPeerConnection(iceServers);
+
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate && dotNetObjectReference) {
+            console.log('[WebRTC] Sending ICE candidate to C#:', event.candidate);
+            dotNetObjectReference.invokeMethodAsync('OnIceCandidate', event.candidate.candidate, event.candidate.sdpMid, event.candidate.sdpMLineIndex);
         }
+    };
 
-        const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
-            ]
-        };
+    peerConnection.ontrack = (event) => {
+        console.log('[WebRTC] Received remote track:', event.streams[0]);
+        // If you have an <audio> element to play remote audio, attach the stream here
+        // e.g., const remoteAudio = document.getElementById('remoteAudio');
+        // if (remoteAudio) remoteAudio.srcObject = event.streams[0];
+    };
 
-        const peerConnection = new RTCPeerConnection(configuration);
-        peerConnections.set(userId, peerConnection);
-        queuedIceCandidates.set(userId, []);
-
-        // Set up event handlers
-        peerConnection.onicecandidate = async (event) => {
-            if (event.candidate) {
-                await dotNetObject.invokeMethodAsync('OnIceCandidate', 
-                    event.candidate.candidate,
-                    event.candidate.sdpMid,
-                    event.candidate.sdpMLineIndex,
-                    userId
-                );
-            }
-        };
-
-        peerConnection.ontrack = (event) => {
-            if (event.track.kind === 'audio') {
-                const streamUserId = event.streams[0].id;
-                let audioElement = audioElements.get(streamUserId);
-                
-                if (!audioElement) {
-                    audioElement = document.createElement('audio');
-                    audioElement.id = `audio-${streamUserId}`;
-                    audioElement.autoplay = true;
-                    audioElement.controls = true;
-                    document.body.appendChild(audioElement);
-                    audioElements.set(streamUserId, audioElement);
-                }
-
-                audioElement.srcObject = event.streams[0];
-                console.log('Audio track added for user:', streamUserId);
-            }
-        };
-
-        // Add local audio track
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            }, 
-            video: false 
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        console.log('[WebRTC] Got user media (microphone access granted)');
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
         });
+        console.log('[WebRTC] Added local stream tracks to peer connection');
 
-        stream.getAudioTracks().forEach(track => {
-            console.log('Local audio track:', track.label, track.enabled, track.muted);
-            peerConnection.addTrack(track, stream);
-        });
-
-        // Create and set local description
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-
-        // Send offer to server
-        await dotNetObject.invokeMethodAsync('SendOffer', {
-            type: offer.type,
-            sdp: offer.sdp,
-            roomId: roomId,
-            userId: userId
-        });
-    } catch (error) {
-        console.error('Error creating peer connection:', error);
-        await dotNetObject.invokeMethodAsync('HandleWebRtcError', 'Failed to initialize audio connection');
-    }
-}
-
-export async function handleOffer(offer, userId) {
-    try {
-        let peerConnection = peerConnections.get(userId);
+        console.log('[WebRTC] Offer created and local description set:', offer);
+        if (dotNetObjectReference) {
+            await dotNetObjectReference.invokeMethodAsync('SendOffer', { 
+                Sdp: offer.sdp, 
+                Type: offer.type 
+            });
+        }
         
-        if (!peerConnection) {
-            const configuration = {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' }
-                ]
-            };
-            peerConnection = new RTCPeerConnection(configuration);
-            peerConnections.set(userId, peerConnection);
-            queuedIceCandidates.set(userId, []);
-
-            // Set up event handlers
-            peerConnection.onicecandidate = async (event) => {
-                if (event.candidate) {
-                    await dotNetObject.invokeMethodAsync('OnIceCandidate', 
-                        event.candidate.candidate,
-                        event.candidate.sdpMid,
-                        event.candidate.sdpMLineIndex,
-                        userId
-                    );
-                }
-            };
-
-            peerConnection.ontrack = (event) => {
-                if (event.track.kind === 'audio') {
-                    const streamUserId = event.streams[0].id;
-                    let audioElement = audioElements.get(streamUserId);
-                    
-                    if (!audioElement) {
-                        audioElement = document.createElement('audio');
-                        audioElement.id = `audio-${streamUserId}`;
-                        audioElement.autoplay = true;
-                        audioElement.controls = true;
-                        document.body.appendChild(audioElement);
-                        audioElements.set(streamUserId, audioElement);
-                    }
-
-                    audioElement.srcObject = event.streams[0];
-                    console.log('Audio track added for user:', streamUserId);
-                }
-            };
-
-            // Add local audio track
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }, 
-                video: false 
-            });
-
-            stream.getAudioTracks().forEach(track => {
-                console.log('Local audio track:', track.label, track.enabled, track.muted);
-                peerConnection.addTrack(track, stream);
-            });
-        }
-
-        // Only set remote description if we're in a stable state
-        if (peerConnection.signalingState === 'stable') {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-
-            // Process any queued ICE candidates
-            const queuedCandidates = queuedIceCandidates.get(userId) || [];
-            for (const candidate of queuedCandidates) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (error) {
-                    console.warn('Error adding queued ICE candidate:', error);
-                }
-            }
-            queuedIceCandidates.set(userId, []);
-
-            await dotNetObject.invokeMethodAsync('SendAnswer', {
-                type: answer.type,
-                sdp: answer.sdp,
-                roomId: offer.roomId,
-                userId: userId
-            });
-        } else {
-            console.warn('Cannot handle offer in current state:', peerConnection.signalingState);
-        }
     } catch (error) {
-        console.error('Error handling offer:', error);
-        await dotNetObject.invokeMethodAsync('HandleWebRtcError', 'Error handling incoming call');
+        console.error('[WebRTC] Error in createPeerConnection (getUserMedia or offer creation):', error);
+        if (dotNetObjectReference) {
+            dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', `Error accessing media devices or creating offer: ${error.message}`);
+        }
     }
-}
+};
 
-export async function handleAnswer(answer, userId) {
+window.handleOffer = async function(offerSdp) {
+    console.log('[WebRTC] Received offer, handling it:', offerSdp);
+    if (!peerConnection) {
+        console.error('[WebRTC] PeerConnection not initialized when trying to handle offer.');
+        if (dotNetObjectReference) {
+             dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', 'PeerConnection not ready for offer.');
+        }
+        return;
+    }
+
     try {
-        const peerConnection = peerConnections.get(userId);
-        if (!peerConnection) {
-            console.warn('No peer connection found for user:', userId);
-            return;
+        await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: offerSdp.type, sdp: offerSdp.sdp }));
+        console.log('[WebRTC] Remote description (offer) set.');
+
+        if (!localStream) {
+            console.log('[WebRTC] Local stream not available, attempting to get user media before creating answer.');
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+            console.log('[WebRTC] Got user media and added tracks while handling offer.');
         }
-
-        // Only set remote description if we're in the correct state
-        if (peerConnection.signalingState === 'have-local-offer') {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-
-            // Process any queued ICE candidates
-            const queuedCandidates = queuedIceCandidates.get(userId) || [];
-            for (const candidate of queuedCandidates) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (error) {
-                    console.warn('Error adding queued ICE candidate:', error);
-                }
-            }
-            queuedIceCandidates.set(userId, []);
-        } else {
-            console.warn('Cannot handle answer in current state:', peerConnection.signalingState);
+        
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        console.log('[WebRTC] Answer created and local description set:', answer);
+        if (dotNetObjectReference) {
+            await dotNetObjectReference.invokeMethodAsync('SendAnswer', { 
+                Sdp: answer.sdp, 
+                Type: answer.type
+            });
         }
     } catch (error) {
-        console.error('Error setting remote description:', error);
-        await dotNetObject.invokeMethodAsync('HandleWebRtcError', 'Error setting remote description');
+        console.error('[WebRTC] Error handling offer or creating answer:', error);
+        if (dotNetObjectReference) {
+            dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', `Error handling offer: ${error.message}`);
+        }
     }
-}
+};
 
-export async function addIceCandidate(candidate, userId) {
+window.handleAnswer = async function(answerSdp) {
+    console.log('[WebRTC] Received answer, handling it:', answerSdp);
+    if (!peerConnection) {
+        console.error('[WebRTC] PeerConnection not initialized when trying to handle answer.');
+         if (dotNetObjectReference) {
+             dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', 'PeerConnection not ready for answer.');
+        }
+        return;
+    }
     try {
-        const peerConnection = peerConnections.get(userId);
-        if (!peerConnection) {
-            console.warn('No peer connection found for user:', userId);
-            return;
-        }
-
-        if (peerConnection.remoteDescription) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        } else {
-            // Queue the ICE candidate if remote description is not set yet
-            const queuedCandidates = queuedIceCandidates.get(userId) || [];
-            queuedCandidates.push(candidate);
-            queuedIceCandidates.set(userId, queuedCandidates);
-        }
+        await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: answerSdp.type, sdp: answerSdp.sdp }));
+        console.log('[WebRTC] Remote description (answer) set.');
     } catch (error) {
-        console.error('Error adding ICE candidate:', error);
-        await dotNetObject.invokeMethodAsync('HandleWebRtcError', 'Error adding ICE candidate');
+        console.error('[WebRTC] Error handling answer:', error);
+        if (dotNetObjectReference) {
+            dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', `Error handling answer: ${error.message}`);
+        }
     }
-}
+};
 
-export function closePeerConnection(userId) {
-    const peerConnection = peerConnections.get(userId);
+window.addIceCandidate = async function(candidateInfo) {
+    console.log('[WebRTC] Adding received ICE candidate:', candidateInfo);
+    if (!peerConnection) {
+        console.error('[WebRTC] PeerConnection not initialized when trying to add ICE candidate.');
+        return;
+    }
+    try {
+        const rtcIceCandidate = new RTCIceCandidate({
+            candidate: candidateInfo.candidate,
+            sdpMid: candidateInfo.sdpMid,
+            sdpMLineIndex: candidateInfo.sdpMLineIndex
+        });
+        await peerConnection.addIceCandidate(rtcIceCandidate);
+        console.log('[WebRTC] ICE candidate added.');
+    } catch (error) {
+        console.error('[WebRTC] Error adding ICE candidate:', error);
+        if (dotNetObjectReference) {
+            dotNetObjectReference.invokeMethodAsync('HandleWebRtcError', `Error adding ICE candidate: ${error.message}`);
+        }
+    }
+};
+
+window.closeWebRTCPeerConnection = async function() {
+    console.log('[WebRTC] Closing peer connection.');
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+        console.log('[WebRTC] Local stream tracks stopped.');
+    }
     if (peerConnection) {
-        // Close all audio tracks for this user
-        const audioElement = audioElements.get(userId);
-        if (audioElement) {
-            if (audioElement.srcObject) {
-                audioElement.srcObject.getTracks().forEach(track => track.stop());
-            }
-            audioElement.remove();
-            audioElements.delete(userId);
-        }
-
         peerConnection.close();
-        peerConnections.delete(userId);
-        queuedIceCandidates.delete(userId);
+        peerConnection = null;
+        console.log('[WebRTC] Peer connection closed.');
     }
-} 
+}; 

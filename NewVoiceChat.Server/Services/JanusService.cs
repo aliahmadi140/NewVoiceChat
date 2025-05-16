@@ -31,7 +31,7 @@ public class JanusService
             });
 
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
-            _sessionId = result.GetProperty("data").GetProperty("id").GetString();
+            _sessionId = result.GetProperty("data").GetProperty("id").GetInt64().ToString();
             _logger.LogInformation("Created Janus session: {SessionId}", _sessionId);
 
             // Attach to AudioBridge plugin
@@ -43,7 +43,7 @@ public class JanusService
             });
 
             result = await response.Content.ReadFromJsonAsync<JsonElement>();
-            _handleId = result.GetProperty("data").GetProperty("id").GetString();
+            _handleId = result.GetProperty("data").GetProperty("id").GetInt64().ToString();
             _logger.LogInformation("Attached to AudioBridge plugin: {HandleId}", _handleId);
         }
         catch (Exception ex)
@@ -57,13 +57,14 @@ public class JanusService
     {
         try
         {
+            var roomId = new Random().Next(100000, 999999); // Generate numeric room ID
             var response = await _httpClient.PostAsJsonAsync($"{_janusUrl}/{_sessionId}/{_handleId}", new
             {
                 janus = "message",
                 body = new
                 {
                     request = "create",
-                    room = roomName,
+                    room = roomId,
                     description = $"Voice chat room: {roomName}",
                     is_private = false,
                     audiolevel_ext = true,
@@ -74,13 +75,20 @@ public class JanusService
             });
 
             var result = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var roomId = result.GetProperty("plugindata").GetProperty("data").GetProperty("room").GetInt64();
-            _logger.LogInformation("Created Janus room: {RoomId}", roomId);
-            return roomId.ToString();
+            var createdRoomId = result.GetProperty("plugindata").GetProperty("data").GetProperty("room").GetInt64();
+            _logger.LogInformation("Created Janus room: {RoomId}", createdRoomId);
+            return createdRoomId.ToString();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating Janus room");
+            // Try to log the response content if available
+            try
+            {
+                var errorContent = await _httpClient.GetStringAsync($"{_janusUrl}/{_sessionId}/{_handleId}");
+                _logger.LogError("Janus error response: {ErrorContent}", errorContent);
+            }
+            catch {}
             throw;
         }
     }

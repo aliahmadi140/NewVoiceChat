@@ -166,11 +166,15 @@
         {
             await VoiceChatService.JoinRoomAsync(roomName);
             currentRoom = roomName;
+
+            await VoiceChatService.InitializeWebRTCAndStartCallAsync();
+            
             StateHasChanged();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            errorMessage = "Failed to join room";
+            errorMessage = $"Failed to join room or start call: {ex.Message}";
+            StateHasChanged();
         }
     }
 

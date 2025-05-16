@@ -111,10 +111,7 @@ public class VoiceChatService : IAsyncDisposable
             try
             {
                 _logger.LogInformation($"Received SDP offer from {offer.UserId}");
-                if (_webRtcModule != null)
-                {
-                    await _webRtcModule.InvokeVoidAsync("handleOffer", offer);
-                }
+                await _jsRuntime.InvokeVoidAsync("handleOffer", offer);
             }
             catch (Exception ex)
             {
@@ -128,10 +125,7 @@ public class VoiceChatService : IAsyncDisposable
             try
             {
                 _logger.LogInformation($"Received SDP answer from {answer.UserId}");
-                if (_webRtcModule != null)
-                {
-                    await _webRtcModule.InvokeVoidAsync("handleAnswer", answer);
-                }
+                await _jsRuntime.InvokeVoidAsync("handleAnswer", answer);
             }
             catch (Exception ex)
             {
@@ -145,10 +139,7 @@ public class VoiceChatService : IAsyncDisposable
             try
             {
                 _logger.LogInformation($"Received ICE candidate from {candidate.UserId}");
-                if (_webRtcModule != null)
-                {
-                    await _webRtcModule.InvokeVoidAsync("addIceCandidate", candidate);
-                }
+                await _jsRuntime.InvokeVoidAsync("addIceCandidate", candidate);
             }
             catch (Exception ex)
             {
@@ -193,16 +184,23 @@ public class VoiceChatService : IAsyncDisposable
 
     private async Task InitializeWebRTC()
     {
+        if (_isDisposed) return;
         try
         {
-            _dotNetObjectReference = DotNetObjectReference.Create(this);
-            _webRtcModule = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/webrtc.js");
-            await _webRtcModule.InvokeVoidAsync("initialize", _dotNetObjectReference);
+            _dotNetObjectReference ??= DotNetObjectReference.Create(this);
+            if (_webRtcModule == null)
+            {
+                _logger.LogInformation("Loading WebRTC JavasScript module...");
+                _webRtcModule = await _jsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/webrtc.js");
+                _logger.LogInformation("WebRTC JavaScript module loaded.");
+            }
+            await _jsRuntime.InvokeVoidAsync("initializeWebRTC", _dotNetObjectReference);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error initializing WebRTC");
-            OnError?.Invoke("Failed to initialize audio connection");
+            _logger.LogError(ex, "Error initializing WebRTC script or calling its initializeWebRTC function");
+            OnError?.Invoke("Failed to initialize audio connection components.");
+            throw;
         }
     }
 
@@ -303,11 +301,6 @@ public class VoiceChatService : IAsyncDisposable
             _logger.LogInformation($"Joining room: {roomName}");
             _currentRoomId = roomName;
             await _hubConnection!.InvokeAsync("JoinRoomAsync", roomName);
-            
-            if (_webRtcModule != null)
-            {
-                await _webRtcModule.InvokeVoidAsync("createPeerConnection", roomName);
-            }
             errorMessage = null;
         }
         catch (Exception ex)
@@ -319,6 +312,33 @@ public class VoiceChatService : IAsyncDisposable
         }
     }
 
+    public async Task InitializeWebRTCAndStartCallAsync()
+    {
+        if (_isDisposed)
+            throw new ObjectDisposedException(nameof(VoiceChatService));
+        if (string.IsNullOrEmpty(_currentRoomId))
+        {
+            _logger.LogWarning("CurrentRoomId is not set. Cannot create peer connection.");
+            OnError?.Invoke("Not currently in a room. Please join a room first.");
+            return;
+        }
+
+        try
+        {
+            await EnsureConnectionAsync();
+            await InitializeWebRTC();
+
+            _logger.LogInformation($"Attempting to create peer connection for room: {_currentRoomId} via user action.");
+            await _jsRuntime.InvokeVoidAsync("createPeerConnection", _currentRoomId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during InitializeWebRTCAndStartCallAsync or subsequent JS interop");
+            OnError?.Invoke("Failed to start voice call. Please try again.");
+            throw;
+        }
+    }
+
     public async Task LeaveRoomAsync()
     {
         if (_isDisposed)
@@ -326,25 +346,27 @@ public class VoiceChatService : IAsyncDisposable
 
         if (_currentRoomId != null)
         {
+            string roomToLeave = _currentRoomId;
+            _currentRoomId = null;
+
             try
             {
-                await EnsureConnectionAsync();
-                _logger.LogInformation($"Leaving room: {_currentRoomId}");
-                await _hubConnection!.InvokeAsync("LeaveRoomAsync", _currentRoomId);
+                _logger.LogInformation($"Leaving room: {roomToLeave}");
+                if (_hubConnection?.State == HubConnectionState.Connected)
+                {
+                    await _hubConnection.InvokeAsync("LeaveRoomAsync", roomToLeave);
+                }
                 
                 if (_webRtcModule != null)
                 {
-                    await _webRtcModule.InvokeVoidAsync("closePeerConnection");
+                    await _jsRuntime.InvokeVoidAsync("closeWebRTCPeerConnection");
                 }
-                
-                _currentRoomId = null;
                 errorMessage = null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error leaving room");
+                _logger.LogError(ex, "Error leaving room or closing WebRTC connection");
                 OnError?.Invoke("Error leaving room. Please try again.");
-                throw;
             }
         }
     }
@@ -436,7 +458,7 @@ public class VoiceChatService : IAsyncDisposable
         await _connectionLock.WaitAsync();
         try
         {
-            if (_currentRoomId != null)
+            if (!string.IsNullOrEmpty(_currentRoomId) || _webRtcModule != null)
             {
                 await LeaveRoomAsync();
             }
@@ -447,7 +469,14 @@ public class VoiceChatService : IAsyncDisposable
             }
             if (_webRtcModule != null)
             {
-                await _webRtcModule.DisposeAsync();
+                try
+                {
+                    await _webRtcModule.DisposeAsync();
+                }
+                catch (JSException ex)
+                {
+                    _logger.LogWarning(ex, "Error disposing WebRTC JavaScript module. It might not support DisposeAsync.");
+                }
                 _webRtcModule = null;
             }
             _dotNetObjectReference?.Dispose();

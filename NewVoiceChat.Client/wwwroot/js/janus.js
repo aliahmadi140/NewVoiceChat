@@ -5,6 +5,7 @@ let roomId = null;
 let myId = null;
 
 export function initialize(serverUrl, dotNetReference) {
+    console.log('[Janus Debug] initialize called with serverUrl:', serverUrl);
     dotNetRef = dotNetReference;
     
     return new Promise((resolve, reject) => {
@@ -37,12 +38,13 @@ export function initialize(serverUrl, dotNetReference) {
 }
 
 function attachAudioBridgePlugin() {
+    console.log('[Janus Debug] Attaching AudioBridge plugin');
     janus.attach({
         plugin: 'janus.plugin.audiobridge',
         opaqueId: 'audiobridge-' + Janus.randomString(12),
         success: function(pluginHandle) {
             audioHandle = pluginHandle;
-            console.log('Plugin attached:', pluginHandle);
+            console.log('[Janus Debug] Plugin attached:', pluginHandle);
             dotNetRef.invokeMethodAsync('OnHandleCreated', pluginHandle.id);
         },
         error: function(error) {
@@ -70,10 +72,11 @@ function attachAudioBridgePlugin() {
 }
 
 function handleMessage(msg, jsep) {
-    console.log('Got a message:', msg);
+    console.log('[Janus Debug] Got a message:', msg);
 
     if (msg.audiobridge === 'joined') {
         myId = msg.id;
+        console.log('[Janus Debug] Joined audiobridge, myId:', myId);
         if (jsep) {
             audioHandle.handleRemoteJsep({ jsep: jsep });
         }
@@ -103,29 +106,35 @@ function handleMessage(msg, jsep) {
 }
 
 function publishOwnFeed() {
+    console.log('[Janus Debug] publishOwnFeed called');
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         .then(function(stream) {
+            console.log('[Janus Debug] Got user media:', stream);
             Janus.debug('Got user media');
             audioHandle.createOffer({
                 media: { audio: true, video: false },
                 success: function(jsep) {
+                    console.log('[Janus Debug] Got SDP:', jsep);
                     Janus.debug('Got SDP:', jsep);
                     var publish = { request: 'configure', muted: false };
                     audioHandle.send({ message: publish, jsep: jsep });
                 },
                 error: function(error) {
+                    console.error('[Janus Debug] WebRTC error:', error);
                     Janus.error('WebRTC error:', error);
                     dotNetRef.invokeMethodAsync('OnJanusError', 'WebRTC error: ' + error);
                 }
             });
         })
         .catch(function(error) {
+            console.error('[Janus Debug] getUserMedia error:', error);
             Janus.error('getUserMedia error:', error);
             dotNetRef.invokeMethodAsync('OnJanusError', 'Media error: ' + error);
         });
 }
 
 export function joinRoom(newRoomId) {
+    console.log('[Janus Debug] joinRoom called with roomId:', newRoomId);
     if (!audioHandle) {
         throw new Error('Janus not initialized');
     }

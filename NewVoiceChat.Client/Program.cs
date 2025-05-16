@@ -15,7 +15,6 @@ builder.Services.AddScoped(sp => new HttpClient
 
 // Add services
 builder.Services.AddScoped<VoiceChatService>();
-builder.Services.AddScoped<WebRtcInterop>();
 builder.Services.AddScoped<JanusService>();
 
 // Configure logging
